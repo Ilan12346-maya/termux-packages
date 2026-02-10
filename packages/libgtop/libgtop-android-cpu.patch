@@ -1,0 +1,331 @@
+diff -uNr libgtop_orig/sysdeps/linux/close.c htop/libgtop_src/sysdeps/linux/close.c
+--- libgtop_orig/sysdeps/linux/close.c	2016-11-27 19:05:03.000000000 +0100
++++ htop/libgtop_src/sysdeps/linux/close.c	2026-02-10 15:27:05.230339188 +0100
+@@ -26,4 +26,9 @@
+ 
+ void
+ glibtop_close_s (glibtop *server)
+-{ }
++{
++	if (server->machine && server->machine->task_ticks) {
++		g_hash_table_destroy(server->machine->task_ticks);
++		server->machine->task_ticks = NULL;
++	}
++}
+diff -uNr libgtop_orig/sysdeps/linux/cpu.c htop/libgtop_src/sysdeps/linux/cpu.c
+--- libgtop_orig/sysdeps/linux/cpu.c	2016-11-27 19:05:03.000000000 +0100
++++ htop/libgtop_src/sysdeps/linux/cpu.c	2026-02-10 15:16:58.126339420 +0100
+@@ -68,6 +68,14 @@
+ #define FILENAME	"/proc/stat"
+ #define STAT_BUFSIZ     81920
+ 
++#include <dirent.h>
++#include <fcntl.h>
++#include <sys/time.h>
++
++#ifndef PROCDIR
++#define PROCDIR "/proc"
++#endif
++
+ void
+ glibtop_get_cpu_s (glibtop *server, glibtop_cpu *buf)
+ {
+@@ -76,66 +84,162 @@
+ 
+ 	memset (buf, 0, sizeof (glibtop_cpu));
+ 
+-	file_to_buffer(server, buffer, sizeof buffer, FILENAME);
+-
+-	/*
+-	 * GLOBAL
+-	 */
+-
+-	p = skip_token (buffer);	/* "cpu" */
+-
+-	buf->user = strtoull (p, &p, 0);
+-	buf->nice = strtoull (p, &p, 0);
+-	buf->sys  = strtoull (p, &p, 0);
+-	buf->idle = strtoull (p, &p, 0);
+-	buf->total = buf->user + buf->nice + buf->sys + buf->idle;
+-
+-	/* 2.6 kernel */
+-	if(server->os_version_code >= LINUX_VERSION_CODE(2, 6, 0))
+-	{
+-		buf->iowait  = strtoull(p, &p, 0);
+-		buf->irq     = strtoull(p, &p, 0);
+-		buf->softirq = strtoull(p, &p, 0);
+-
+-		buf->total += buf->iowait + buf->irq + buf->softirq;
+-	}
+-
+-	buf->frequency = 100;
+-	buf->flags = _glibtop_sysdeps_cpu;
++	if (access(FILENAME, R_OK) == 0) {
++		file_to_buffer(server, buffer, sizeof buffer, FILENAME);
+ 
+-	/*
+-	 * PER CPU
+-	 */
+-
+-	for (i = 0; i <= server->ncpu; i++) {
+-
+-		p = skip_line(p); /* move to ^ */
+-
+-		if (!check_cpu_line_warn(server, p, i))
+-			break;
+-
+-		p = skip_token(p); /* "cpuN" */
+-
+-		buf->xcpu_user [i] = strtoull (p, &p, 0);
+-		buf->xcpu_nice [i] = strtoull (p, &p, 0);
+-		buf->xcpu_sys  [i] = strtoull (p, &p, 0);
+-		buf->xcpu_idle [i] = strtoull (p, &p, 0);
+-		buf->xcpu_total[i] = buf->xcpu_user [i] \
+-			+ buf->xcpu_nice [i] \
+-			+ buf->xcpu_sys  [i] \
+-			+ buf->xcpu_idle [i];
++		/*
++		 * GLOBAL
++		 */
++
++		p = skip_token (buffer);	/* "cpu" */
++
++		buf->user = strtoull (p, &p, 0);
++		buf->nice = strtoull (p, &p, 0);
++		buf->sys  = strtoull (p, &p, 0);
++		buf->idle = strtoull (p, &p, 0);
++		buf->total = buf->user + buf->nice + buf->sys + buf->idle;
+ 
+ 		/* 2.6 kernel */
+ 		if(server->os_version_code >= LINUX_VERSION_CODE(2, 6, 0))
+ 		{
+-			buf->xcpu_iowait [i]  = strtoull(p, &p, 0);
+-			buf->xcpu_irq [i]     = strtoull(p, &p, 0);
+-			buf->xcpu_softirq [i] = strtoull(p, &p, 0);
+-
+-			buf->xcpu_total [i] += buf->xcpu_iowait [i] \
+-				+ buf->xcpu_irq [i] \
+-				+ buf->xcpu_softirq [i];
++			buf->iowait  = strtoull(p, &p, 0);
++			buf->irq     = strtoull(p, &p, 0);
++			buf->softirq = strtoull(p, &p, 0);
++
++			buf->total += buf->iowait + buf->irq + buf->softirq;
++		}
++
++		buf->frequency = 100;
++		buf->flags = _glibtop_sysdeps_cpu;
++
++		/*
++		 * PER CPU
++		 */
++
++		for (i = 0; i <= server->ncpu; i++) {
++
++			p = skip_line(p); /* move to ^ */
++
++			if (!check_cpu_line_warn(server, p, i))
++				break;
++
++			p = skip_token(p); /* "cpuN" */
++
++			buf->xcpu_user [i] = strtoull (p, &p, 0);
++			buf->xcpu_nice [i] = strtoull (p, &p, 0);
++			buf->xcpu_sys  [i] = strtoull (p, &p, 0);
++			buf->xcpu_idle [i] = strtoull (p, &p, 0);
++			buf->xcpu_total[i] = buf->xcpu_user [i] \
++				+ buf->xcpu_nice [i] \
++				+ buf->xcpu_sys  [i] \
++				+ buf->xcpu_idle [i];
++
++			/* 2.6 kernel */
++			if(server->os_version_code >= LINUX_VERSION_CODE(2, 6, 0))
++			{
++				buf->xcpu_iowait [i]  = strtoull(p, &p, 0);
++				buf->xcpu_irq [i]     = strtoull(p, &p, 0);
++				buf->xcpu_softirq [i] = strtoull(p, &p, 0);
++
++				buf->xcpu_total [i] += buf->xcpu_iowait [i] \
++					+ buf->xcpu_irq [i] \
++					+ buf->xcpu_softirq [i];
++			}
++		}
++	} else if (server->machine && server->machine->task_ticks) {
++		struct timeval currUpdate;
++		gettimeofday(&currUpdate, NULL);
++		double dt = (currUpdate.tv_sec - server->machine->last_update.tv_sec) + 
++		            (currUpdate.tv_usec - server->machine->last_update.tv_usec) / 1000000.0;
++		unsigned long long total_jiffies_dt = (unsigned long long)(dt * 100.0);
++		server->machine->last_update = *(GTimeVal *)&currUpdate;
++
++		unsigned long long *core_user_diffs = g_malloc0(sizeof(unsigned long long) * (server->ncpu + 2));
++
++		DIR* proc_dir = opendir(PROCDIR);
++		if (proc_dir) {
++			struct dirent* proc_entry;
++			while ((proc_entry = readdir(proc_dir))) {
++				if (proc_entry->d_name[0] < '0' || proc_entry->d_name[0] > '9') continue;
++
++				char task_path[256];
++				snprintf(task_path, sizeof(task_path), PROCDIR "/%s/task", proc_entry->d_name);
++				DIR* task_dir = opendir(task_path);
++				if (!task_dir) continue;
++
++				struct dirent* task_entry;
++				while ((task_entry = readdir(task_dir))) {
++					if (task_entry->d_name[0] < '0' || task_entry->d_name[0] > '9') continue;
++
++					char stat_path[512];
++					snprintf(stat_path, sizeof(stat_path), "%s/%s/stat", task_path, task_entry->d_name);
++					
++					int fd = open(stat_path, O_RDONLY);
++					if (fd != -1) {
++						char stat_buf[2048];
++						ssize_t n = read(fd, stat_buf, sizeof(stat_buf) - 1);
++						close(fd);
++						if (n > 0) {
++							stat_buf[n] = '\0';
++							char* last_paren = strrchr(stat_buf, ')');
++							if (last_paren) {
++								unsigned long long utime = 0, stime = 0;
++								int processor = -1;
++								int field = 1;
++								char* p_ptr = last_paren + 2;
++								char* saveptr;
++								char* token = strtok_r(p_ptr, " ", &saveptr);
++								while (token) {
++									if (field == 12) utime = strtoull(token, NULL, 10);
++									else if (field == 13) stime = strtoull(token, NULL, 10);
++									else if (field == 37) {
++										processor = atoi(token);
++										break;
++									}
++									token = strtok_r(NULL, " ", &saveptr);
++									field++;
++								}
++								
++								if (processor >= 0 && (unsigned int)processor <= (unsigned int)server->ncpu) {
++									unsigned int pid = (unsigned int)atoi(proc_entry->d_name);
++									unsigned int tid = (unsigned int)atoi(task_entry->d_name);
++									gpointer key = GUINT_TO_POINTER(pid ^ (tid << 5));
++									unsigned long long total_ticks = utime + stime;
++									gpointer last_ticks_ptr = g_hash_table_lookup(server->machine->task_ticks, key);
++									if (last_ticks_ptr) {
++										unsigned long long last_ticks = *(unsigned long long*)last_ticks_ptr;
++										unsigned long long diff = (total_ticks > last_ticks) ? (total_ticks - last_ticks) : 0;
++										core_user_diffs[processor + 1] += diff;
++										core_user_diffs[0] += diff;
++										*(unsigned long long*)last_ticks_ptr = total_ticks;
++									} else {
++										unsigned long long* new_ticks = g_malloc(sizeof(unsigned long long));
++										*new_ticks = total_ticks;
++										g_hash_table_insert(server->machine->task_ticks, key, new_ticks);
++									}
++								}
++							}
++						}
++					}
++				}
++				closedir(task_dir);
++			}
++			closedir(proc_dir);
++		}
++
++		buf->user = core_user_diffs[0];
++		buf->total = total_jiffies_dt * (server->ncpu + 1);
++		if (buf->user > buf->total) buf->user = buf->total;
++		buf->idle = (buf->total > buf->user) ? (buf->total - buf->user) : 0;
++		buf->flags = _glibtop_sysdeps_cpu;
++
++		for (i = 0; i <= server->ncpu; i++) {
++			buf->xcpu_user[i] = core_user_diffs[i+1];
++			buf->xcpu_total[i] = total_jiffies_dt;
++			if (buf->xcpu_user[i] > buf->xcpu_total[i]) buf->xcpu_user[i] = buf->xcpu_total[i];
++			buf->xcpu_idle[i] = buf->xcpu_total[i] - buf->xcpu_user[i];
+ 		}
++		g_free(core_user_diffs);
+ 	}
+ 
+ 	if(server->ncpu) /* ok, that's a real SMP */
+diff -uNr libgtop_orig/sysdeps/linux/glibtop_machine.h htop/libgtop_src/sysdeps/linux/glibtop_machine.h
+--- libgtop_orig/sysdeps/linux/glibtop_machine.h	2023-01-15 11:43:14.000000000 +0100
++++ htop/libgtop_src/sysdeps/linux/glibtop_machine.h	2026-02-10 14:57:52.978339857 +0100
+@@ -32,6 +32,8 @@
+   uid_t euid;
+   gid_t gid;
+   gid_t egid;
++  GHashTable *task_ticks;
++  GTimeVal last_update;
+ };
+ 
+ G_END_DECLS
+diff -uNr libgtop_orig/sysdeps/linux/open.c htop/libgtop_src/sysdeps/linux/open.c
+--- libgtop_orig/sysdeps/linux/open.c	2016-11-27 19:05:03.000000000 +0100
++++ htop/libgtop_src/sysdeps/linux/open.c	2026-02-10 15:15:19.790339457 +0100
+@@ -67,33 +67,58 @@
+ #define FILENAME	"/proc/stat"
+ #define STAT_BUFSIZ     81920
+ 
++#include <dirent.h>
++#include <sys/time.h>
++
+ void
+ glibtop_open_s (glibtop *server, const char *program_name,
+ 		const unsigned long features,
+ 		const unsigned flags)
+ {
+ 	char buffer [STAT_BUFSIZ], *p = buffer;
++	int i;
+ 
+ 	server->name = program_name;
+ 
+ 	set_linux_version(server);
+ 
+-	file_to_buffer(server, buffer, sizeof buffer, FILENAME);
++	if (access(FILENAME, R_OK) == 0) {
++		file_to_buffer(server, buffer, sizeof buffer, FILENAME);
+ 
+-	p = skip_line(p); /* cpu */
++		p = skip_line(p); /* cpu */
+ 
+-	for (server->real_ncpu = 0; /* nop */; server->real_ncpu++) {
++		for (server->real_ncpu = 0; /* nop */; server->real_ncpu++) {
+ 
+-		if (!check_cpu_line(server, p, server->real_ncpu)) {
+-			server->real_ncpu--;
+-			break;
+-		}
++			if (!check_cpu_line(server, p, server->real_ncpu)) {
++				server->real_ncpu--;
++				break;
++			}
+ 
+-		p = skip_line(p);
++			p = skip_line(p);
++		}
++	} else {
++		server->real_ncpu = 0;
++		DIR *dir = opendir("/sys/devices/system/cpu");
++		if (dir) {
++			struct dirent *entry;
++			while ((entry = readdir(dir))) {
++				if (strncmp(entry->d_name, "cpu", 3) == 0 &&
++				    entry->d_name[3] >= '0' && entry->d_name[3] <= '9') {
++					server->real_ncpu++;
++				}
++			}
++			closedir(dir);
++		}
++		if (server->real_ncpu > 0) server->real_ncpu--;
+ 	}
+ 
+ 	server->ncpu = MIN(GLIBTOP_NCPU - 1, server->real_ncpu);
+ 
++	if (server->machine) {
++		server->machine->task_ticks = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
++		gettimeofday((struct timeval *)&server->machine->last_update, NULL);
++	}
++
+ 	if (server->real_ncpu != server->ncpu) {
+ 		glibtop_warn_r(server,
+ 			       "This machine has %d CPUs, "
